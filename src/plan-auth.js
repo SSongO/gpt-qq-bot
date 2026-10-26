@@ -12,6 +12,23 @@ const SCOPES = 'openid profile email offline_access resource.invoke ' + PLAN_SCO
 const random = () => randomBytes(32).toString('base64url');
 const equal = (a, b) => typeof a === 'string' && typeof b === 'string' && Buffer.byteLength(a) === Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 export class AuthError extends Error { constructor(code, status = 0) { super(code); this.code = code; this.status = status; } }
+let cachedWindowsSid;
+function windowsSid() {
+  if (cachedWindowsSid) return cachedWindowsSid;
+  try {
+    const identity = execFileSync('whoami.exe', ['/user', '/fo', 'csv', '/nh'], { encoding: 'utf8', windowsHide: true });
+    const sid = identity.match(/S-1-\d+(?:-\d+)+/)?.[0];
+    if (!sid) throw new Error();
+    return cachedWindowsSid = sid;
+  } catch { throw new AuthError('chatgpt_storage_permissions'); }
+}
+export function credentialDirectory(root, { platform = process.platform, sid = null } = {}) {
+  if (platform !== 'win32') return resolve(root, 'state/chatgpt');
+  const userSid = sid || windowsSid();
+  if (!/^S-1-\d+(?:-\d+)+$/.test(userSid)) throw new AuthError('chatgpt_storage_permissions');
+  // Each OS identity owns a distinct store. Never reopen or modify another user's store.
+  return resolve(root, 'state/chatgpt-users', userSid);
+}
 
 export function verifyIdToken(token, jwks, { clientId, nonce, subject = null, now = Date.now() / 1000 } = {}) {
   try {
@@ -33,17 +50,15 @@ function secureDirectory(path) {
   mkdirSync(path, { recursive: true, mode: 0o700 });
   if (process.platform === 'win32') {
     try {
-      const identity = execFileSync('whoami.exe', ['/user', '/fo', 'csv', '/nh'], { encoding: 'utf8', windowsHide: true });
-      const sid = identity.match(/S-1-\d+(?:-\d+)+/)?.[0];
-      if (!sid) throw new Error();
+      const sid = windowsSid();
       execFileSync('icacls.exe', [path, '/inheritance:r', '/grant:r', `*${sid}:(OI)(CI)F`, '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F'], { stdio: 'pipe', windowsHide: true });
     } catch { throw new AuthError('chatgpt_storage_permissions'); }
   }
 }
 export class PlanAuth {
   constructor({ root = ROOT, fetchImpl = fetch, protect = true } = {}) {
-    this.path = resolve(root, 'state/chatgpt/accounts.json');
-    const directory = resolve(root, 'state/chatgpt');
+    const directory = protect ? credentialDirectory(root) : resolve(root, 'state/chatgpt');
+    this.path = resolve(directory, 'accounts.json');
     if (protect) secureDirectory(directory); else mkdirSync(directory, { recursive: true });
     this.fetch = fetchImpl; this.pending = null; this.refreshing = new Map(); this.busy = false; this.lastError = null;
     this.data = existsSync(this.path) ? JSON.parse(readFileSync(this.path, 'utf8')) : { hostId: 'urn:uuid:' + randomUUID(), activeId: null, profiles: [] };

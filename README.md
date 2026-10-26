@@ -15,7 +15,7 @@ v1.1.0 提供官方 **Sign in with ChatGPT** 登录入口。符合条件的账�
 
 首次成功授权会显示订阅用量提示；「管理用量」可打开 [ChatGPT 用量设置](https://chatgpt.com/settings/usage)。支持重新登录、保存多个连接、切换连接与退出登录。切换账号、重新登录成功或退出时清空聊天上下文，并丢弃旧账号处理中及排队的回复。
 
-OAuth 凭据单独存放在 `state/chatgpt/`；Windows 下限制该目录的 ACL，Unix 下使用仅所有者可读写的权限。控制台不会返回这些令牌。程序不会读取 Codex 的登录凭据，也不会在订阅额度不足时自动切换到 API Key。
+OAuth 凭据在 Windows 下按操作系统账户分别存放于 `state/chatgpt-users/<Windows SID>/`，并限制各自目录的 ACL；Unix 下存放在 `state/chatgpt/`，使用仅所有者可读写的权限。不同 Windows 账户需要分别授权，不会读取或修改其他账户的凭据目录。控制台不会返回这些令牌。程序不会读取 Codex 的登录凭据，也不会在订阅额度不足时自动切换到 API Key。
 
 订阅模式按官方要求采用 `store:false`、`stream:true`，仅在收到完整结束事件后回复 QQ。该模式不发送 `max_output_tokens`，因此页面的输出 token 上限只对 API Key 模式生效；本机回复字符上限仍然生效。[官方协议与限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)
 

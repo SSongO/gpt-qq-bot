@@ -4,7 +4,7 @@ import { generateKeyPairSync, sign, createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { PlanAuth, verifyIdToken, ISSUER, RESOURCE } from '../src/plan-auth.js';
+import { PlanAuth, verifyIdToken, ISSUER, RESOURCE, credentialDirectory } from '../src/plan-auth.js';
 import { generateWithPlan, userError } from '../src/provider.js';
 import { defaults } from '../src/config.js';
 import { Bot } from '../src/bot.js';
@@ -18,6 +18,13 @@ function jwt({ audience = 'oaiapp_fixture', nonce = 'nonce', subject = 'subject-
   return head + '.' + body + '.' + sign('RSA-SHA256', Buffer.from(head + '.' + body), privateKey).toString('base64url');
 }
 const scopes = 'openid profile email offline_access resource.invoke chatgpt.tokens.use.direct';
+test('different Windows identities use distinct stable credential stores', () => {
+  const root = resolve(tmpdir(), 'gpt-qq-store-path');
+  const a = credentialDirectory(root, { platform: 'win32', sid: 'S-1-5-21-1001' });
+  const b = credentialDirectory(root, { platform: 'win32', sid: 'S-1-5-21-1002' });
+  assert.notEqual(a, b); assert.equal(a, credentialDirectory(root, { platform: 'win32', sid: 'S-1-5-21-1001' }));
+  assert.ok(a.startsWith(root)); assert.throws(() => credentialDirectory(root, { platform: 'win32', sid: '../other-user' }));
+});
 const json = data => new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
 function fixture() {
   const root = mkdtempSync(resolve(tmpdir(), 'gpt-qq-oauth-')); const requests = [];
