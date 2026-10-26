@@ -1,0 +1,7 @@
+config.json
+.env
+state/
+node_modules/
+runtime/
+*.lnk
+*.log

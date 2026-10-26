@@ -1,0 +1,10 @@
+{
+  "name": "gpt-qq-bot",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone GPT QQ chatbot using OpenAI Responses and OneBot v11",
+  "engines": { "node": ">=22.13.0" },
+  "scripts": { "start": "node src/main.js", "test": "node --test", "check": "node src/main.js --check" },
+  "license": "MIT"
+}

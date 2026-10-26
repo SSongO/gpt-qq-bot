@@ -1,0 +1,42 @@
+{
+  "port": 3100,
+  "openai": {
+    "authMode": "api-key",
+    "baseUrl": "https://api.openai.com/v1",
+    "apiKey": "",
+    "model": "gpt-4.1-mini",
+    "systemPrompt": "你是一个友善、自然的 QQ 聊天助手。默认用简洁中文回复，尊重用户的表达习惯。只根据当前对话回答，不假装执行了工具、浏览网页或读取文件。",
+    "maxOutputTokens": 2048,
+    "timeoutMs": 90000
+  },
+  "onebot": {
+    "mode": "websocket",
+    "wsUrl": "ws://127.0.0.1:3001",
+    "httpUrl": "http://127.0.0.1:3000",
+    "accessToken": "",
+    "eventSecret": "",
+    "botQQ": ""
+  },
+  "access": {
+    "ownerQQ": "",
+    "privateUsers": [],
+    "groups": [],
+    "blockedUsers": [],
+    "groupTrigger": "mention",
+    "prefix": "/ask"
+  },
+  "chat": {
+    "historyTurns": 12,
+    "historyMaxChars": 24000,
+    "sessionTtlMinutes": 120,
+    "maxSessions": 200,
+    "maxInputChars": 6000,
+    "maxReplyChars": 8000,
+    "chunkChars": 1500,
+    "sendDelayMs": 600,
+    "cooldownMs": 1500,
+    "maxConcurrent": 3,
+    "maxPending": 60,
+    "maxPendingPerSession": 4
+  }
+}
