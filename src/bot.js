@@ -40,9 +40,11 @@ export function routeEvent(event, config) {
   const mixed = group && config.access.groupTrigger === 'mention-or-random';
   if (mixed && mentioned && !text) text = '在吗？';
   if (!text) return null;
+  const normalized = text.normalize('NFKC').toLowerCase();
+  const keywordHit = mixed && !mentioned && config.access.groupKeywords.some(word => normalized.includes(word.trim().normalize('NFKC').toLowerCase()));
   // In a group, each member has a separate history, including /reset.
   const key = `${event.self_id}:${group ? 'g:' + event.group_id + ':u' : 'p'}:${user}`;
-  return { key, text, event, priority: mixed && mentioned, sample: mixed && !mentioned };
+  return { key, text, event, priority: mixed && mentioned, sample: mixed && !mentioned, keywordHit };
 }
 export class Bot {
   constructor(config, { send, model = generate, log = () => {}, random = Math.random } = {}) {
@@ -67,7 +69,8 @@ export class Bot {
       if (this.seen.size > 10000) this.seen.delete(this.seen.keys().next().value);
     }
     // Decide once per message, after deduplication, so repeated gateway events cannot reroll.
-    if (routed.sample && this.random() >= this.config.access.groupReplyChance / 100) {
+    const chance = routed.keywordHit ? Math.max(this.config.access.groupReplyChance, this.config.access.groupKeywordReplyChance) : this.config.access.groupReplyChance;
+    if (routed.sample && this.random() >= chance / 100) {
       this.stats.ignored++; return Promise.resolve();
     }
     for (const [key, session] of this.sessions) {
@@ -113,7 +116,7 @@ export class Bot {
     while (history.length && history.reduce((n, m) => n + m.content.length, 0) > this.config.chat.historyMaxChars) history.splice(0, 2);
     return history;
   }
-  async handle({ event, text, epoch }, session) {
+  async handle({ event, text, epoch, keywordHit }, session) {
     if (this.stopped || epoch !== this.contextEpoch) return;
     try {
       if (text === '/reset') {
@@ -125,7 +128,10 @@ export class Bot {
       if (text === '/ping') { await this.send(event, '机器人在线，当前模型：' + this.config.openai.model); return; }
       if (text.length > this.config.chat.maxInputChars) { await this.send(event, `消息太长，请控制在 ${this.config.chat.maxInputChars} 个字符内。`); return; }
       const input = [...this.trimHistory(session.history), { role: 'user', content: text }];
-      const result = await this.model(this.config, input);
+      const modelConfig = keywordHit ? {
+        ...this.config, openai: { ...this.config.openai, systemPrompt: this.config.openai.systemPrompt + '\n群聊称呼提示：管理员把以下词语设置为对你的称呼：' + this.config.access.groupKeywords.join('、') + '。当前消息提到了其中的称呼，请结合语境按你自己的身份自然回应，不要解释关键词匹配或回复概率。' }
+      } : this.config;
+      const result = await this.model(modelConfig, input);
       this.stats.inputTokens += Number(result.usage?.input_tokens) || 0;
       this.stats.outputTokens += Number(result.usage?.output_tokens) || 0;
       if (this.stopped || epoch !== this.contextEpoch) return;

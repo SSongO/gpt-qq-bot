@@ -24,6 +24,8 @@
     "blockedUsers": [],
     "groupTrigger": "mention",
     "groupReplyChance": 10,
+    "groupKeywordReplyChance": 50,
+    "groupKeywords": ["gpt", "chatgpt", "机器人", "小橘"],
     "prefix": "/ask"
   },
   "chat": {

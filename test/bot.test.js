@@ -165,6 +165,68 @@ test('Responses extraction handles messages, refusal and multiple text blocks', 
   assert.equal(extractText({ output: [{ type: 'reasoning', content: [] }, { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '你好' }, { type: 'output_text', text: '世界' }] }] }), '你好\n世界');
   assert.equal(extractText({ output: [{ type: 'message', role: 'assistant', content: [{ type: 'refusal', refusal: '无法协助' }] }] }), '无法协助');
 });
+
+test('keyword settings accept bounded percentages and nonempty aliases with backward-compatible defaults', () => {
+  const c = config();
+  for (const value of [0, 50, 100]) { c.access.groupKeywordReplyChance = value; assert.doesNotThrow(() => validate(c)); }
+  for (const value of [-1, 101, 1.5, '50']) { c.access.groupKeywordReplyChance = value; assert.throws(() => validate(c)); }
+  c.access.groupKeywordReplyChance = 50;
+  for (const value of [[''], ['   '], [123], ['x'.repeat(65)], Array(51).fill('gpt'), 'gpt']) { c.access.groupKeywords = value; assert.throws(() => validate(c)); }
+  c.access.groupKeywords = []; assert.doesNotThrow(() => validate(c));
+  const old = config(); delete old.access.groupKeywords; delete old.access.groupKeywordReplyChance;
+  const merged = merge(defaults(), old); assert.equal(merged.access.groupKeywordReplyChance, 50); assert.ok(merged.access.groupKeywords.includes('gpt'));
+});
+
+test('aliases match case and full-width variants and use the boosted probability boundary', async () => {
+  const c = config(); c.access.groupTrigger = 'mention-or-random'; c.access.groupReplyChance = 10; c.access.groupKeywordReplyChance = 50;
+  const sent = [], draws = [0.49, 0.49, 0.49, 0.5, 0.49, 0.05];
+  const bot = new Bot(c, { random: () => draws.shift(), model: async (_, messages) => modelResult(messages.at(-1).content), send: async (_, text) => sent.push(text) });
+  for (const text of ['gPt 你好', 'ＧＰＴ 在吗', '小橘来聊聊', 'ChatGPT 帮忙', '普通聊天', '其他闲聊']) await bot.accept(event(text, { message_type: 'group', group_id: 200 }));
+  assert.deepEqual(sent, ['gPt 你好', 'ＧＰＴ 在吗', '小橘来聊聊', '其他闲聊']); assert.equal(draws.length, 0);
+});
+
+test('a custom alias list replaces defaults and an empty list disables the boost', async () => {
+  const c = config(); c.access.groupTrigger = 'mention-or-random'; c.access.groupKeywords = ['小太阳'];
+  const sent = [];
+  const bot = new Bot(c, { random: () => 0.3, model: async (_, messages) => modelResult(messages.at(-1).content), send: async (_, text) => sent.push(text) });
+  await bot.accept(event('小太阳你好', { message_type: 'group', group_id: 200 }));
+  await bot.accept(event('gpt 你好', { message_type: 'group', group_id: 200 }));
+  c.access.groupKeywords = [];
+  await bot.accept(event('小太阳再聊聊', { message_type: 'group', group_id: 200 }));
+  assert.deepEqual(sent, ['小太阳你好']);
+});
+
+test('keyword probability cannot lower the ordinary rate and mentions still bypass both probabilities', async () => {
+  const c = config(); c.access.groupTrigger = 'mention-or-random'; c.access.groupReplyChance = 80; c.access.groupKeywordReplyChance = 50;
+  let calls = 0;
+  const bot = new Bot(c, { random: () => 0.7, model: async () => { calls++; return modelResult('好'); }, send: async () => {} });
+  await bot.accept(event('gpt 你好', { message_type: 'group', group_id: 200 }));
+  c.access.groupReplyChance = 0; c.access.groupKeywordReplyChance = 0;
+  bot.random = () => { throw Error('mention should not draw'); };
+  await bot.accept(event(mention('gpt 你好'), { message_type: 'group', group_id: 200 }));
+  assert.equal(calls, 2);
+});
+
+test('a keyword reply explains aliases to the model without changing the saved persona or user text', async () => {
+  const c = config(); c.access.groupTrigger = 'mention-or-random'; c.openai.systemPrompt = '你叫小橘，活泼开朗。';
+  let received;
+  const bot = new Bot(c, { random: () => 0.2, model: async (modelConfig, messages) => { received = { modelConfig, messages }; return modelResult('我在'); }, send: async () => {} });
+  await bot.accept(event('GPT 你叫什么', { message_type: 'group', group_id: 200 }));
+  assert.ok(received.modelConfig.openai.systemPrompt.startsWith(c.openai.systemPrompt));
+  assert.match(received.modelConfig.openai.systemPrompt, /对你的称呼/);
+  assert.equal(received.messages.at(-1).content, 'GPT 你叫什么');
+  assert.equal(c.openai.systemPrompt, '你叫小橘，活泼开朗。');
+});
+
+test('keyword settings do not sample private chats or bypass blocked users and group allowlists', async () => {
+  const c = config(); c.access.groupTrigger = 'mention-or-random'; c.access.groupKeywordReplyChance = 100; c.access.blockedUsers = ['101'];
+  let calls = 0;
+  const bot = new Bot(c, { random: () => { throw Error('ineligible messages should not draw'); }, model: async modelConfig => { assert.equal(modelConfig, c); calls++; return modelResult('好'); }, send: async () => {} });
+  await bot.accept(event('GPT 私聊'));
+  await bot.accept(event('GPT 群聊', { message_type: 'group', group_id: 201 }));
+  await bot.accept(event('GPT 群聊', { message_type: 'group', group_id: 200, user_id: 101 }));
+  assert.equal(calls, 1);
+});
 test('real HTTP model request uses Responses API, memory input and store:false', async () => {
   let received;
   const server = http.createServer(async (req, res) => { const chunks = []; for await (const p of req) chunks.push(p); received = { path: req.url, auth: req.headers.authorization, data: JSON.parse(Buffer.concat(chunks)) }; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ status: 'completed', output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '连接成功' }] }], usage: { input_tokens: 5, output_tokens: 2 } })); });
@@ -292,9 +354,10 @@ test('signed HTTP events return immediately, invoke GPT and send through OneBot 
     const signature = 'sha1=' + createHmac('sha1', c.onebot.eventSecret).update(raw).digest('hex');
     const response = await fetch(url + '/onebot/events', { method: 'POST', headers: { 'X-Signature': signature }, body: raw }); assert.equal(response.status, 204); assert.equal(sent.length, 0);
     release(); await bot.drain(); assert.deepEqual(sent, ['HTTP 回路正常']); assert.equal(modelRequests, 1);
-    const saved = await fetch(url + '/api/config', { method: 'POST', headers, body: JSON.stringify({ openai: { apiKey: '', model: 'my-gpt' }, access: { groups: ['300'], groupTrigger: 'mention-or-random', groupReplyChance: 10 } }) });
+    const saved = await fetch(url + '/api/config', { method: 'POST', headers, body: JSON.stringify({ openai: { apiKey: '', model: 'my-gpt' }, access: { groups: ['300'], groupTrigger: 'mention-or-random', groupReplyChance: 10, groupKeywordReplyChance: 50, groupKeywords: ['gpt', '小橘'] } }) });
     assert.equal(saved.status, 200); const stored = JSON.parse(readFileSync(join(dir, 'config.json'))); assert.equal(stored.openai.apiKey, 'hidden-key'); assert.equal(stored.openai.model, 'my-gpt'); assert.equal(c.openai.model, 'gpt-4.1-mini');
     assert.equal(stored.access.groupTrigger, 'mention-or-random'); assert.equal(stored.access.groupReplyChance, 10); assert.equal(c.access.groupTrigger, 'mention');
+    assert.equal(stored.access.groupKeywordReplyChance, 50); assert.deepEqual(stored.access.groupKeywords, ['gpt', '小橘']);
     await fetch(url + '/api/config', { method: 'POST', headers, body: JSON.stringify({ openai: { apiKey: 'new-hidden-key' } }) });
     await fetch(url + '/api/config', { method: 'POST', headers, body: JSON.stringify({ openai: { apiKey: '' }, access: { ownerQQ: '101' } }) });
     const savedAgain = JSON.parse(readFileSync(join(dir, 'config.json'))); assert.equal(savedAgain.openai.apiKey, 'new-hidden-key'); assert.equal(savedAgain.openai.model, 'my-gpt');
