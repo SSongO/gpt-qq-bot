@@ -6,6 +6,7 @@ import { Bot } from './bot.js';
 import { OneBot } from './onebot.js';
 import { createServer } from './server.js';
 import { getPlanAuth } from './plan-auth.js';
+import { MediaResolver } from './media.js';
 
 const [major, minor] = process.versions.node.split('.').map(Number);
 if (major < 22 || (major === 22 && minor < 13)) { console.error('请安装 Node.js 22.13 或更新版本。'); process.exit(1); }
@@ -26,7 +27,8 @@ const token = adminToken();
 const planAuth = getPlanAuth();
 let bot;
 const onebot = new OneBot(config, event => { void bot.accept(event); }, log);
-bot = new Bot(config, { send: (event, text) => onebot.send(event, text), log });
+const media = new MediaResolver(config, (action, params) => onebot.call(action, params));
+bot = new Bot(config, { send: (event, text) => onebot.send(event, text), resolveMedia: images => media.resolve(images), log });
 const managed = process.env.GPT_QQ_MANAGED === '1';
 const restart = managed ? () => {
   const fd = openSync(resolve(ROOT, 'state/launcher.log'), 'a');
@@ -38,7 +40,7 @@ const restart = managed ? () => {
 const server = createServer({ config, token, bot, onebot, logs, onRestart: restart, onStop: stop, planAuth });
 server.on('error', error => { console.error(error.code === 'EADDRINUSE' ? `端口 ${config.port} 已被占用，请关闭另一个实例或修改 config.json 的 port。` : '控制台无法启动：' + error.code); process.exit(1); });
 server.listen(config.port, '127.0.0.1', () => {
-  console.log('\nGPT QQ Bot 1.3.0\n控制台：http://127.0.0.1:' + config.port + '/#' + token + '\n控制台令牌：' + token + '\n关闭程序：Ctrl+C\n');
+  console.log('\nGPT QQ Bot 1.4.0\n控制台：http://127.0.0.1:' + config.port + '/#' + token + '\n控制台令牌：' + token + '\n关闭程序：Ctrl+C\n');
   if (config.openai.authMode === 'chatgpt' && !planAuth.status().planEnabled) log('warn', '请在本机控制台点击 Continue with ChatGPT，登录并授权使用订阅额度');
   else if (config.openai.authMode !== 'chatgpt' && !apiKey(config)) log('warn', '请先在本机控制台填写 API Key、主人 QQ 和白名单，保存后重启');
   onebot.start();

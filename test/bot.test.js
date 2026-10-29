@@ -14,7 +14,7 @@ import { Script } from 'node:vm';
 
 // All model traffic goes to a loopback fixture, with a dummy key.
 process.env.OPENAI_API_KEY = 'test-key';
-const config = () => { const c = defaults(); c.access.ownerQQ = '100'; c.access.groups = ['200']; c.chat.cooldownMs = 0; c.chat.sendDelayMs = 0; return c; };
+const config = () => { const c = defaults(); c.access.ownerQQ = '100'; c.access.groups = ['200']; c.chat.cooldownMs = 0; c.chat.sendDelayMs = 0; c.chat.continuationSeconds = 0; return c; };
 const event = (message = '你好', extra = {}) => ({ post_type: 'message', message_type: 'private', self_id: 999, user_id: 100, message_id: Math.random().toString(16), message, ...extra });
 const modelResult = text => ({ text, usage: { input_tokens: 3, output_tokens: 2 } });
 const mention = text => [{ type: 'at', data: { qq: '999' } }, { type: 'text', data: { text } }];

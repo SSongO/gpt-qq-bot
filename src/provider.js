@@ -121,6 +121,7 @@ export async function generateWithPlan(config, messages, { planAuth = getPlanAut
   } finally { try { await reader?.cancel(); } catch {} }
 }
 export function userError(error) {
+  if (['image_download_failed', 'image_invalid', 'image_too_large'].includes(error.code)) return '这张图片暂时没能读取到，可以重发一张普通图片或静态表情吗？';
   if (error.code === 'chatgpt_network_blocked') return '当前网络访问 OpenAI 官方授权服务被拦截（HTTP 403）。请管理员检查网络连通性后重新登录。';
   if (error.code === 'chatgpt_network_error') return '无法连接 OpenAI 授权或订阅服务，请管理员检查网络后重试。';
   if (['chatgpt_not_signed_in', 'chatgpt_login_expired', 'chatgpt_authorization_required'].includes(error.code)) return '请管理员在本机控制台使用 ChatGPT 登录并授权订阅额度。';

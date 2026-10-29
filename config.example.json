@@ -28,7 +28,16 @@
     "groupKeywords": ["gpt", "chatgpt", "机器人", "小橘"],
     "prefix": "/ask"
   },
+  "vision": {
+    "enabled": true,
+    "maxImages": 3,
+    "maxImageBytes": 5242880,
+    "historyImages": 2,
+    "maxHistoryBytes": 33554432
+  },
   "chat": {
+    "continuationSeconds": 180,
+    "continuationTurns": 6,
     "historyTurns": 12,
     "historyMaxChars": 24000,
     "sessionTtlMinutes": 120,

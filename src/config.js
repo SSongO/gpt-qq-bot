@@ -18,7 +18,14 @@ export function validate(c) {
   const str = (v, name, max = 16000) => { if (typeof v !== 'string' || v.length > max) fail(name); };
   const int = (v, lo, hi, name) => { if (!Number.isInteger(v) || v < lo || v > hi) fail(name); };
   int(c.port, 1024, 65535, 'port');
-  for (const section of ['openai', 'onebot', 'access', 'chat']) if (!plain(c[section])) fail(section);
+  for (const section of ['openai', 'onebot', 'access', 'chat', 'vision']) if (!plain(c[section])) fail(section);
+  if (typeof c.vision.enabled !== 'boolean') fail('vision.enabled');
+  int(c.vision.maxImages, 1, 5, 'vision.maxImages');
+  int(c.vision.maxImageBytes, 1024, 20 * 1024 * 1024, 'vision.maxImageBytes');
+  int(c.vision.historyImages, 0, 5, 'vision.historyImages');
+  int(c.vision.maxHistoryBytes, 0, 128 * 1024 * 1024, 'vision.maxHistoryBytes');
+  int(c.chat.continuationSeconds, 0, 1800, 'chat.continuationSeconds');
+  int(c.chat.continuationTurns, 0, 20, 'chat.continuationTurns');
   for (const k of ['baseUrl', 'apiKey', 'model', 'systemPrompt']) str(c.openai[k], 'openai.' + k);
   if (!['api-key', 'chatgpt'].includes(c.openai.authMode)) fail('openai.authMode');
   if (!c.openai.model.trim() || !c.openai.systemPrompt.trim()) fail('模型名/人格不能为空');
