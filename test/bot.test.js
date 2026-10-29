@@ -68,6 +68,99 @@ test('prefix mode requires a whole prefix and strips it', () => {
   assert.equal(routeEvent(event('/ask 你好', group), c).text, '你好');
   c.access.groupTrigger = 'all'; assert.equal(routeEvent(event('hi', group), c).text, 'hi');
 });
+
+test('mixed group mode validates the configured percentage and preserves old defaults', () => {
+  const c = config(); c.access.groupTrigger = 'mention-or-random';
+  for (const value of [0, 10, 100]) { c.access.groupReplyChance = value; assert.doesNotThrow(() => validate(c)); }
+  for (const value of [-1, 101, 10.5, '10', NaN]) { c.access.groupReplyChance = value; assert.throws(() => validate(c)); }
+  const old = config(); delete old.access.groupReplyChance;
+  assert.equal(merge(defaults(), old).access.groupReplyChance, 10);
+});
+
+test('mixed mode always routes real mentions, including a bare mention, without drawing a probability', async () => {
+  const c = config(); c.access.groupTrigger = 'mention-or-random'; c.access.groupReplyChance = 0;
+  const sent = [];
+  const bot = new Bot(c, { random: () => { throw Error('mentions must not draw'); }, model: async () => modelResult('收到'), send: async (_, text) => sent.push(text) });
+  await bot.accept(event(mention('你好'), { message_type: 'group', group_id: 200 }));
+  await bot.accept(event('[CQ:at,qq=999]', { message_type: 'group', group_id: 200 }));
+  assert.deepEqual(sent, ['收到', '收到']);
+});
+
+test('ordinary group messages independently use the exact configured probability boundary', async () => {
+  const c = config(); c.access.groupTrigger = 'mention-or-random'; c.access.groupReplyChance = 10;
+  const draws = [0, 0.099999, 0.1, 0.99]; let calls = 0;
+  const bot = new Bot(c, { random: () => draws.shift(), model: async () => { calls++; return modelResult('好'); }, send: async () => {} });
+  for (let i = 0; i < 4; i++) await bot.accept(event('闲聊 ' + i, { message_type: 'group', group_id: 200 }));
+  assert.equal(calls, 2); assert.equal(draws.length, 0); assert.equal(bot.stats.ignored, 2);
+});
+
+test('zero and full probability affect only ordinary group messages, not allowed private chats', async () => {
+  for (const chance of [0, 100]) {
+    const c = config(); c.access.groupTrigger = 'mention-or-random'; c.access.groupReplyChance = chance;
+    let calls = 0;
+    const bot = new Bot(c, { random: () => 0.5, model: async () => { calls++; return modelResult('好'); }, send: async () => {} });
+    await bot.accept(event('普通群消息', { message_type: 'group', group_id: 200 }));
+    await bot.accept(event('私聊'));
+    assert.equal(calls, chance === 0 ? 1 : 2);
+  }
+});
+
+test('repeated gateway delivery of a skipped random message cannot reroll', async () => {
+  const c = config(); c.access.groupTrigger = 'mention-or-random';
+  let draws = 0, calls = 0;
+  const bot = new Bot(c, { random: () => ++draws === 1 ? 0.9 : 0, model: async () => { calls++; return modelResult('好'); }, send: async () => {} });
+  const e = event('闲聊', { message_type: 'group', group_id: 200 });
+  await bot.accept(e); await bot.accept(e);
+  assert.equal(draws, 1); assert.equal(calls, 0);
+});
+
+test('mixed mode still enforces group allowlists, blocks and actual mention targets', async () => {
+  const c = config(); c.access.groupTrigger = 'mention-or-random'; c.access.groupReplyChance = 0;
+  c.access.blockedUsers = ['101']; let calls = 0;
+  const bot = new Bot(c, { random: () => 0.9, model: async () => { calls++; return modelResult('好'); }, send: async () => {} });
+  for (const e of [
+    event(mention('你好'), { message_type: 'group', group_id: 201 }),
+    event(mention('你好'), { message_type: 'group', group_id: 200, user_id: 101 }),
+    event('[CQ:at,qq=all] hi', { message_type: 'group', group_id: 200 }),
+    event('[CQ:at,qq=888] hi', { message_type: 'group', group_id: 200 }),
+    event('&#91;CQ:at,qq=999&#93; hi', { message_type: 'group', group_id: 200 })
+  ]) await bot.accept(e);
+  assert.equal(calls, 0);
+});
+
+test('a direct group mention bypasses ordinary cooldown while retaining queue capacity limits', async () => {
+  const c = config(); c.access.groupTrigger = 'mention-or-random'; c.access.groupReplyChance = 100; c.chat.cooldownMs = 60000;
+  let calls = 0;
+  const bot = new Bot(c, { random: () => 0, model: async () => { calls++; return modelResult('好'); }, send: async () => {} });
+  await bot.accept(event('普通消息', { message_type: 'group', group_id: 200 }));
+  await bot.accept(event(mention('问你呢'), { message_type: 'group', group_id: 200 }));
+  await bot.accept(event('另一条普通消息', { message_type: 'group', group_id: 200 }));
+  assert.equal(calls, 2); assert.equal(bot.stats.throttled, 1);
+  c.chat.maxPendingPerSession = 1;
+  let release; const gate = new Promise(r => release = r);
+  bot.model = async () => { await gate; return modelResult('好'); };
+  const first = bot.accept(event(mention('问题一'), { message_type: 'group', group_id: 200 }));
+  await bot.accept(event(mention('问题二'), { message_type: 'group', group_id: 200 }));
+  assert.equal(bot.stats.throttled, 2); release(); await first;
+});
+
+test('mentions take priority over queued ordinary messages without interrupting an active response', async () => {
+  const c = config(); c.access.groupTrigger = 'mention-or-random'; c.access.groupReplyChance = 100; c.chat.maxConcurrent = 1;
+  const started = []; let release; const gate = new Promise(r => release = r);
+  const bot = new Bot(c, { random: () => 0, model: async (_, messages) => {
+    const text = messages.at(-1).content; started.push(text);
+    if (text === '正在处理') await gate;
+    return modelResult('好');
+  }, send: async () => {} });
+  const first = bot.accept(event('正在处理', { message_type: 'group', group_id: 200 }));
+  await eventually(() => started.length === 1);
+  const ordinary = bot.accept(event('普通排队', { message_type: 'group', group_id: 200, user_id: 101 }));
+  const direct = bot.accept(event(mention('直接提问'), { message_type: 'group', group_id: 200, user_id: 102 }));
+  await eventually(() => bot.jobs.length === 2);
+  assert.deepEqual(started, ['正在处理']);
+  release(); await Promise.all([first, ordinary, direct]);
+  assert.deepEqual(started, ['正在处理', '直接提问', '普通排队']);
+});
 test('Responses extraction handles messages, refusal and multiple text blocks', () => {
   assert.equal(extractText({ output: [{ type: 'reasoning', content: [] }, { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '你好' }, { type: 'output_text', text: '世界' }] }] }), '你好\n世界');
   assert.equal(extractText({ output: [{ type: 'message', role: 'assistant', content: [{ type: 'refusal', refusal: '无法协助' }] }] }), '无法协助');
@@ -199,8 +292,9 @@ test('signed HTTP events return immediately, invoke GPT and send through OneBot 
     const signature = 'sha1=' + createHmac('sha1', c.onebot.eventSecret).update(raw).digest('hex');
     const response = await fetch(url + '/onebot/events', { method: 'POST', headers: { 'X-Signature': signature }, body: raw }); assert.equal(response.status, 204); assert.equal(sent.length, 0);
     release(); await bot.drain(); assert.deepEqual(sent, ['HTTP 回路正常']); assert.equal(modelRequests, 1);
-    const saved = await fetch(url + '/api/config', { method: 'POST', headers, body: JSON.stringify({ openai: { apiKey: '', model: 'my-gpt' }, access: { groups: ['300'] } }) });
+    const saved = await fetch(url + '/api/config', { method: 'POST', headers, body: JSON.stringify({ openai: { apiKey: '', model: 'my-gpt' }, access: { groups: ['300'], groupTrigger: 'mention-or-random', groupReplyChance: 10 } }) });
     assert.equal(saved.status, 200); const stored = JSON.parse(readFileSync(join(dir, 'config.json'))); assert.equal(stored.openai.apiKey, 'hidden-key'); assert.equal(stored.openai.model, 'my-gpt'); assert.equal(c.openai.model, 'gpt-4.1-mini');
+    assert.equal(stored.access.groupTrigger, 'mention-or-random'); assert.equal(stored.access.groupReplyChance, 10); assert.equal(c.access.groupTrigger, 'mention');
     await fetch(url + '/api/config', { method: 'POST', headers, body: JSON.stringify({ openai: { apiKey: 'new-hidden-key' } }) });
     await fetch(url + '/api/config', { method: 'POST', headers, body: JSON.stringify({ openai: { apiKey: '' }, access: { ownerQQ: '101' } }) });
     const savedAgain = JSON.parse(readFileSync(join(dir, 'config.json'))); assert.equal(savedAgain.openai.apiKey, 'new-hidden-key'); assert.equal(savedAgain.openai.model, 'my-gpt');

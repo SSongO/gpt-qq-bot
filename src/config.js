@@ -30,7 +30,8 @@ export function validate(c) {
   }
   if (!['websocket', 'http'].includes(c.onebot.mode)) fail('onebot.mode');
   if (c.onebot.mode === 'http' && c.onebot.eventSecret.length < 16) fail('HTTP 上报密钥至少 16 位');
-  if (!['mention', 'prefix', 'all'].includes(c.access.groupTrigger)) fail('access.groupTrigger');
+  if (!['mention', 'prefix', 'all', 'mention-or-random'].includes(c.access.groupTrigger)) fail('access.groupTrigger');
+  int(c.access.groupReplyChance, 0, 100, 'access.groupReplyChance');
   const id = x => typeof x === 'string' && /^\d+$/.test(x) && Number.isSafeInteger(Number(x)) && Number(x) > 0;
   for (const k of ['ownerQQ', 'prefix']) str(c.access[k], 'access.' + k, 128);
   for (const [k, v] of [['ownerQQ', c.access.ownerQQ], ['botQQ', c.onebot.botQQ]]) if (v && !id(v)) fail(k);

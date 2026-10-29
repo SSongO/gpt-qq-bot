@@ -37,14 +37,16 @@ export function routeEvent(event, config) {
   if (group && config.access.groupTrigger === 'mention' && !mentioned) return null;
   if (group && config.access.groupTrigger === 'prefix' && !prefixed) return null;
   if (prefixed) text = text.slice(prefix.length).trim();
+  const mixed = group && config.access.groupTrigger === 'mention-or-random';
+  if (mixed && mentioned && !text) text = '在吗？';
   if (!text) return null;
   // In a group, each member has a separate history, including /reset.
   const key = `${event.self_id}:${group ? 'g:' + event.group_id + ':u' : 'p'}:${user}`;
-  return { key, text, event };
+  return { key, text, event, priority: mixed && mentioned, sample: mixed && !mentioned };
 }
 export class Bot {
-  constructor(config, { send, model = generate, log = () => {} } = {}) {
-    this.config = config; this.send = send; this.model = model; this.log = log;
+  constructor(config, { send, model = generate, log = () => {}, random = Math.random } = {}) {
+    this.config = config; this.send = send; this.model = model; this.log = log; this.random = random;
     this.sessions = new Map(); this.seen = new Map(); this.active = 0; this.pending = 0;
     this.jobs = []; this.stopped = false; this.contextEpoch = 0;
     this.stats = { received: 0, accepted: 0, replied: 0, ignored: 0, throttled: 0, errors: 0, inputTokens: 0, outputTokens: 0 };
@@ -64,6 +66,10 @@ export class Bot {
       this.seen.set(id, now);
       if (this.seen.size > 10000) this.seen.delete(this.seen.keys().next().value);
     }
+    // Decide once per message, after deduplication, so repeated gateway events cannot reroll.
+    if (routed.sample && this.random() >= this.config.access.groupReplyChance / 100) {
+      this.stats.ignored++; return Promise.resolve();
+    }
     for (const [key, session] of this.sessions) {
       if (!session.pending && now - session.lastUsed > this.config.chat.sessionTtlMinutes * 60000) this.sessions.delete(key);
     }
@@ -77,18 +83,23 @@ export class Bot {
       s = { history: [], pending: 0, lastAccepted: 0, lastUsed: now, tail: Promise.resolve() };
       this.sessions.set(routed.key, s);
     }
-    if (this.pending >= this.config.chat.maxPending || s.pending >= this.config.chat.maxPendingPerSession || now - s.lastAccepted < this.config.chat.cooldownMs) {
+    if (this.pending >= this.config.chat.maxPending || s.pending >= this.config.chat.maxPendingPerSession || (!routed.priority && now - s.lastAccepted < this.config.chat.cooldownMs)) {
       this.stats.throttled++; return Promise.resolve();
     }
     s.lastAccepted = now; s.lastUsed = now; s.pending++; this.pending++; this.stats.accepted++;
-    const job = s.tail.then(() => this.slot(() => this.handle(routed, s))).catch(() => {
+    const job = s.tail.then(() => this.slot(() => this.handle(routed, s), routed.priority)).catch(() => {
       this.stats.errors++; this.log('error', '会话处理失败');
     }).finally(() => { s.pending--; this.pending--; s.lastUsed = Date.now(); });
     s.tail = job;
     return job;
   }
-  slot(fn) {
-    return new Promise((resolve, reject) => { this.jobs.push({ fn, resolve, reject }); this.pump(); });
+  slot(fn, priority = false) {
+    return new Promise((resolve, reject) => {
+      const job = { fn, resolve, reject, priority };
+      const firstNormal = priority ? this.jobs.findIndex(item => !item.priority) : -1;
+      if (firstNormal < 0) this.jobs.push(job); else this.jobs.splice(firstNormal, 0, job);
+      this.pump();
+    });
   }
   pump() {
     while (this.active < this.config.chat.maxConcurrent && this.jobs.length) {
@@ -109,7 +120,7 @@ export class Bot {
         session.history = []; await this.send(event, '已清空你在当前会话中的聊天记忆。'); return;
       }
       if (text === '/help') {
-        await this.send(event, '直接发送文字即可聊天。\n/reset 清空当前聊天记忆\n/ping 检查机器人\n/help 查看帮助\n群内按管理员设置使用 @ 或前缀触发；暂不识别图片与语音。'); return;
+        await this.send(event, '直接发送文字即可聊天。\n/reset 清空当前聊天记忆\n/ping 检查机器人\n/help 查看帮助\n群内按管理员设置使用 @、前缀或概率回复；暂不识别图片与语音。'); return;
       }
       if (text === '/ping') { await this.send(event, '机器人在线，当前模型：' + this.config.openai.model); return; }
       if (text.length > this.config.chat.maxInputChars) { await this.send(event, `消息太长，请控制在 ${this.config.chat.maxInputChars} 个字符内。`); return; }

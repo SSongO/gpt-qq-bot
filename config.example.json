@@ -23,6 +23,7 @@
     "groups": [],
     "blockedUsers": [],
     "groupTrigger": "mention",
+    "groupReplyChance": 10,
     "prefix": "/ask"
   },
   "chat": {
