@@ -158,6 +158,21 @@ test('late subscription-limit failures reject partial output and surface usage g
   try { await generateWithPlan(config, [], { planAuth: plan, fetchImpl: async () => sse([{ type: 'response.output_text.delta', delta: 'partial' }, { type: 'response.failed', response: { error: { code: 'subscription_sharing_usage_limit_exceeded' } } }]) }); } catch (e) { caught = e; }
   assert.equal(caught.code, 'chatgpt_usage_limit'); assert.match(userError(caught), /管理用量/);
 });
+test('plan inference accepts a valid completed SSE stream when Content-Type is omitted', async () => {
+  const response = sse([{ type: 'response.output_text.delta', delta: '连接成功' }, { type: 'response.completed', response: { status: 'completed' } }]);
+  response.headers.delete('Content-Type');
+  const result = await generateWithPlan(defaults(), [], { planAuth: plan, fetchImpl: async () => response });
+  assert.equal(result.text, '连接成功'); assert.equal(result.incomplete, false);
+});
+test('a missing Content-Type does not allow HTML, plain text or unfinished model output', async () => {
+  for (const value of ['<!doctype html><title>Blocked</title>', 'connection successful']) {
+    await assert.rejects(generateWithPlan(defaults(), [], { planAuth: plan, fetchImpl: async () => new Response(Buffer.from(value)) }), /chatgpt_interrupted_stream/);
+  }
+  const partial = sse([{ type: 'response.output_text.delta', delta: 'partial' }]); partial.headers.delete('Content-Type');
+  await assert.rejects(generateWithPlan(defaults(), [], { planAuth: plan, fetchImpl: async () => partial }), /chatgpt_interrupted_stream/);
+  const typed = sse([{ type: 'response.completed', response: { status: 'completed' } }]); typed.headers.set('Content-Type', 'text/html');
+  await assert.rejects(generateWithPlan(defaults(), [], { planAuth: plan, fetchImpl: async () => typed }), /chatgpt_invalid_stream/);
+});
 test('plan inference rejects truncated streams and incomplete terminal events', async () => {
   for (const events of [[{ type: 'response.output_text.delta', delta: 'partial' }], [{ type: 'response.incomplete', response: {} }]]) {
     await assert.rejects(generateWithPlan(defaults(), [], { planAuth: plan, fetchImpl: async () => sse(events) }), /chatgpt_(interrupted_stream|incomplete)/);

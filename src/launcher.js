@@ -60,6 +60,8 @@ async function stopManaged(record, running, token) {
 }
 async function launch() {
   const args = new Set(process.argv.slice(2));
+  // Load before spawning Node so startup options such as NODE_USE_ENV_PROXY reach the child.
+  if (existsSync(resolve(ROOT, '.env'))) process.loadEnvFile(resolve(ROOT, '.env'));
   const config = loadConfig();
   const token = adminToken();
   if (args.has('--status')) {
@@ -84,10 +86,11 @@ async function launch() {
     }
     if (await portBusy(config.port)) throw new Error('Port ' + config.port + ' is already in use. Change the bot port or close the other service.');
     const executable = process.platform === 'win32' && existsSync(resolve(ROOT, 'runtime/node.exe')) ? resolve(ROOT, 'runtime/node.exe') : process.execPath;
+    const runtimeArgs = process.env.NODE_USE_ENV_PROXY === '1' && process.allowedNodeEnvironmentFlags.has('--use-env-proxy') ? ['--use-env-proxy'] : [];
     const fd = openSync(resolve(state, 'service.log'), 'a');
     let child;
     try {
-      child = spawn(executable, [resolve(ROOT, 'src/main.js')], { cwd: ROOT, detached: true, windowsHide: true, stdio: ['ignore', fd, fd], env: { ...process.env, GPT_QQ_MANAGED: '1' } });
+      child = spawn(executable, [...runtimeArgs, resolve(ROOT, 'src/main.js')], { cwd: ROOT, detached: true, windowsHide: true, stdio: ['ignore', fd, fd], env: { ...process.env, GPT_QQ_MANAGED: '1' } });
       await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
     } finally { closeSync(fd); }
     child.unref();

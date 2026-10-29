@@ -27,6 +27,10 @@ OAuth 凭据在 Windows 下按操作系统账户分别存放于 `state/chatgpt-u
 
 已部署版如果带有 `runtime/node.exe`，也可以双击 `launch.vbs`，或让桌面快捷方式指向它。普通源码用户可以使用后文的 `start.cmd` 前台运行。后台日志位于 `state/service.log`；其中包含本机控制台令牌，请勿分享。重启会清空聊天记忆。
 
+如果旧 DSH 桥接程序已占用 `3100`，停止 GPT 机器人后修改本机 `config.json` 的 `port` 为另一个空闲端口（例如 `3102`），再用桌面入口启动。连接同一个 QQ 的两个机器人应轮流运行，避免重复回复。
+
+Windows 系统代理不一定会被 Node.js 自动使用。使用随部署提供的 Node.js 24.22.1 时，可以在本机 `.env` 中设置 `NODE_USE_ENV_PROXY=1`、`HTTPS_PROXY`、`HTTP_PROXY` 和 `NO_PROXY=localhost,127.0.0.1,::1`，代理地址填写自己的 HTTP 代理端口。桌面启动器会在创建后台进程前加载 `.env`；`start.cmd` 也会在 Node.js 启动时加载它。修改后重启生效。本机 QQ 网关和控制台通过 `NO_PROXY` 直接连接。
+
 ## 三步开始
 
 ### 1. 准备 QQ 端
@@ -60,7 +64,7 @@ node src/main.js
 - **OpenAI API Key**：仅在 API Key 模式下需要。请在本机页面输入，不要发进 QQ 或提交到代码仓库。
 - **模型名**：订阅模式从登录账号返回的模型列表中选择；API Key 示例默认 `gpt-4.1-mini`。程序不假定所有账号都具有相同模型权限。
 - **API 地址**：官方默认 `https://api.openai.com/v1`。第三方兼容网关必须支持 `/responses`；只有 `/chat/completions` 的网关暂不支持。
-- **OneBot 地址与 Access Token**：与 QQ 网关配置一致。
+- **OneBot 地址与 Access Token**：与所选接口的配置一致。某些网关的 HTTP 和 WebSocket 分别使用不同的令牌；正向 WebSocket 模式必须填写 WebSocket 服务的令牌。
 - **主人 QQ**：你自己的 QQ 号，用来私聊机器人。
 - **私聊白名单、群白名单**：按需添加。空白名单表示不开放；主人 QQ 仍可私聊。
 

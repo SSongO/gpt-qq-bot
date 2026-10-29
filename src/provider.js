@@ -64,14 +64,20 @@ export async function generateWithPlan(config, messages, { planAuth = getPlanAut
     // Plan credentials go only to the official endpoint, never a configured gateway.
     const response = await fetchImpl(RESOURCE + '/responses', {
       method: 'POST', redirect: 'error', signal: AbortSignal.timeout(config.openai.timeoutMs),
-      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', Accept: 'text/event-stream' },
       body: JSON.stringify({ model: config.openai.model, instructions: config.openai.systemPrompt, input: messages, store: false, stream: true })
     });
     if (!response.ok) {
       let code; try { code = (await response.json()).error?.code; } catch {}
       throw planFailure(code, response.status);
     }
-    if (!response.headers.get('content-type')?.includes('text/event-stream')) throw new ServiceError('chatgpt_invalid_stream');
+    const contentType = response.headers.get('content-type');
+    if (contentType && !/^text\/event-stream(?:;|$)/i.test(contentType)) {
+      await response.body?.cancel();
+      throw new ServiceError('chatgpt_invalid_stream');
+    }
+    // Some transports omit Content-Type. The SSE parser still requires valid data
+    // events and response.completed; a missing header does not permit partial text.
     reader = response.body.getReader();
     const decoder = new TextDecoder(); let buffer = '', currentEvent = [], text = '', total = 0, completed = null;
     function dispatch() {
